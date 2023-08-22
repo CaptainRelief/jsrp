@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>EBIN GEIMU</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta property="og:title" content="EBIN GEIMU">
+  <style>
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+
+  <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.148.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.148.0/examples/jsm/"
+        }
+      }
+    </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    class SpriteHandler {
+      constructor(directions, actions, spriteSize, numFrames, onLoad) {
+        this.directions = directions;
+        this.actions = actions;
+        this.spriteSize = spriteSize;
+        this.numFrames = numFrames;
+        this.materials = {};
+
+        this.loadMaterials(onLoad);
+      }
+
+      loadMaterials(onLoad) {
+        const totalMaterials = this.directions.length * this.actions.length;
+        let materialsLoaded = 0;
+
+        for (const direction of this.directions) {
+          for (const action of this.actions) {
+            const material = new THREE.SpriteMaterial({ transparent: true, depthTest: false });
+
+            const textureLoader = new THREE.TextureLoader();
+            textureLoader.load(`png/player/${direction}_${action}.png`, (texture) => {
+              material.map = texture;
+              this.materials[`${direction}_${action}`] = material;
+
+              materialsLoaded++;
+              if (materialsLoaded === totalMaterials && typeof onLoad === 'function') {
+                onLoad();
+              }
+            });
+          }
+        }
+      }
+
+      getMaterial(direction, action) {
+        return this.materials[`${direction}_${action}`];
+      }
+    }
+
+    class Player {
+      constructor(spriteHandler) {
+        this.spriteHandler = spriteHandler;
+        this.sprite = new THREE.Sprite();
+        this.position = new THREE.Vector3(0, 0, 0);
+        this.directionIndex = 0;
+        this.actionIndex = 0;
+        this.animationFrame = 0;
+
+        this.directions = ['up', 'down', 'left', 'right', 'up_left', 'up_right', 'down_left', 'down_right'];
+        this.actions = ['idle', 'move', 'attack']; // Update with your actions
+
+        this.setSpriteSize();
+        this.updateSpriteMaterial();
+      }
+
+      setSpriteSize() {
+        const material = this.spriteHandler.getMaterial(this.getDirection(), this.actions[0]);
+        if (material) {
+          this.sprite.scale.set(this.spriteHandler.spriteSize * (material.map.image.width / material.map.image.height), this.spriteHandler.spriteSize, 1);
+        }
+      }
+
+
+      updatePosition(input) {
+        let moveX = 0;
+        let moveY = 0;
+
+        if (input.left) moveX -= 1;
+        if (input.right) moveX += 1;
+        if (input.up) moveY += 1;
+        if (input.down) moveY -= 1;
+
+        // Normalize the diagonal movement
+        if (moveX !== 0 && moveY !== 0) {
+          moveX *= Math.sqrt(0.5);
+          moveY *= Math.sqrt(0.5);
+        }
+
+        this.position.x += moveX * 0.05;
+        this.position.y += moveY * 0.05;
+
+        // Determine the direction and action based on input
+        if (moveX > 0) {
+          if (moveY > 0) this.setDirection(4); // up-right
+          else if (moveY < 0) this.setDirection(6); // down-right
+          else this.setDirection(3); // right
+        } else if (moveX < 0) {
+          if (moveY > 0) this.setDirection(5); // up-left
+          else if (moveY < 0) this.setDirection(7); // down-left
+          else this.setDirection(2); // left
+        } else {
+          if (moveY > 0) this.setDirection(0); // up
+          else if (moveY < 0) this.setDirection(1); // down
+          else this.setAction('idle');
+        }
+
+        if (moveX !== 0 || moveY !== 0) {
+          this.setAction('move');
+        }
+
+        this.sprite.position.copy(this.position);
+      }
+
+
+      setDirection(direction) {
+        this.directionIndex = direction;
+        this.updateSpriteMaterial();
+      }
+
+      setAction(action) {
+        if (this.action !== action) {
+          this.action = action;
+          this.actionIndex = this.getActionIndex(action);
+          this.animationFrame = 0;
+        }
+      }
+
+      updateAnimation(deltaTime) {
+        this.animationFrame = (this.animationFrame + deltaTime * framesPerSecond) % 8;
+        this.updateSpriteMaterial();
+      }
+
+      updateSpriteMaterial() {
+        const material = this.spriteHandler.getMaterial(this.getDirection(), this.actions[this.actionIndex]);
+        if (material) {
+          this.sprite.material = material;
+
+          const frameWidth = 1.0 / this.spriteHandler.numFrames;
+          const offsetX = (this.animationFrame % this.spriteHandler.numFrames) * frameWidth;
+          const offsetY = 1.0 - (this.actionIndex + 1) * (1.0 / this.spriteHandler.numActions);
+
+          material.map.offset.set(offsetX, offsetY);
+          material.map.repeat.set(frameWidth, 1.0 / this.spriteHandler.numActions);
+        }
+      }
+
+
+      getOffsetY() {
+        return this.actionIndex / this.spriteHandler.numActions;
+      }
+
+      getDirection() {
+        return `${this.directions[this.directionIndex]}_${this.action}`;
+      }
+
+      getActionIndex(action) {
+        switch (action) {
+          case 'idle': return 0;
+          case 'move': return 1;
+          case 'attack': return 2;
+          default: return 0;
+        }
+      }
+
+      // Other methods...
+    }
+    const spriteSize = 256; // Update with your sprite size
+    const numFrames = { idle: 1, move: 30, attack: 30 }; // Update with the number of frames for each action
+
+    const numDirections = 8;
+    const numActions = 3;
+    const framesPerSecond = 10;
+    function startApp() {
+
+
+      // Set up the scene
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.z = 10;
+      const renderer = new THREE.WebGLRenderer();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+      // Create ambient light
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+      scene.add(ambientLight);// Create ambient light
+
+
+      // Define available directions and actions
+      const directions = ['up', 'down', 'left', 'right', 'up_left', 'up_right', 'down_left', 'down_right'];
+      const actions = ['idle', 'move', 'attack']; // Replace with your actual actions
+
+      const spriteHandler = new SpriteHandler(directions, actions, spriteSize, numFrames);
+      spriteHandler.loadMaterials(() => {
+
+        // Create players
+        const player1 = new Player(spriteHandler);
+        const player2 = new Player(spriteHandler);
+
+        // Set initial positions for both players
+        player1.position.set(-2, 0, 0);
+        player2.position.set(2, 0, 0);
+
+        scene.add(player1.sprite);
+        scene.add(player2.sprite);
+
+        // Handle user input
+        const player1Input = { left: false, right: false, up: false, down: false, attack: false };
+        const player2Input = { left: false, right: false, up: false, down: false, attack: false };
+
+        document.addEventListener('keydown', (event) => {
+          // Handle player 1 input
+          if (event.keyCode === 83) player1Input.down = true;
+          if (event.keyCode === 87) player1Input.up = true;
+          if (event.keyCode === 65) player1Input.left = true;
+          if (event.keyCode === 68) player1Input.right = true;
+          if (event.keyCode === 49) player1Input.attack = true;
+          // Handle player 2 input
+          if (event.keyCode === 40) player2Input.down = true;
+          if (event.keyCode === 38) player2Input.up = true;
+          if (event.keyCode === 39) player2Input.left = true;
+          if (event.keyCode === 37) player2Input.right = true;
+          if (event.keyCode === 190) player2Input.attack = true;
+        });
+
+        document.addEventListener('keyup', (event) => {
+          // Handle player 1 input
+          if (event.keyCode === 83) player1Input.down = false;
+          if (event.keyCode === 87) player1Input.up = false;
+          if (event.keyCode === 65) player1Input.left = false;
+          if (event.keyCode === 68) player1Input.right = false;
+          if (event.keyCode === 49) player1Input.attack = false;
+          // Handle player 2 input
+          if (event.keyCode === 40) player2Input.down = false;
+          if (event.keyCode === 38) player2Input.up = false;
+          if (event.keyCode === 39) player2Input.left = false;
+          if (event.keyCode === 37) player2Input.right = false;
+          if (event.keyCode === 190) player2Input.attack = false;
+        });
+
+        // Inside the animate() function, update players and render
+        function animate() {
+          requestAnimationFrame(animate);
+
+          const currentTime = performance.now();
+          const deltaTime = (currentTime - prevTime) / 1000;
+
+          // Update player animations and positions
+          player1.updateAnimation(deltaTime);
+          player2.updateAnimation(deltaTime);
+
+          player1.updatePosition(player1Input);
+          player2.updatePosition(player2Input);
+
+          prevTime = currentTime;
+
+          renderer.render(scene, camera);
+        }
+
+        let prevTime = performance.now();
+        animate();
+      });
+    }
+    // Call the startApp function to begin your application
+    startApp();
+  </script>
+</body>
+
+</html>
